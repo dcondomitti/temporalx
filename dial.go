@@ -24,9 +24,15 @@ type Config struct {
 	// Keyring seals every payload. Required.
 	Keyring *Keyring
 
-	// APIKey authenticates to Temporal Cloud and turns on TLS. Empty means a
-	// plaintext frontend, which only a local dev server accepts.
+	// APIKey authenticates to Temporal Cloud and turns on TLS. Empty, with no
+	// client certificate either, means a plaintext frontend, which only a
+	// local dev server accepts.
 	APIKey string
+	// ClientCertFile and ClientKeyFile authenticate with mTLS. The files are
+	// re-read on every TLS handshake, so a certificate rotated in place (as
+	// cert-manager does) is picked up without a restart.
+	ClientCertFile string
+	ClientKeyFile  string
 	// Logger receives the SDK's own logging. Defaults to slog.Default().
 	Logger log.Logger
 	// Tracing installs the SDK's OpenTelemetry interceptor, which emits
@@ -46,6 +52,12 @@ type Option func(*Config)
 
 // WithAPIKey authenticates with a Temporal Cloud API key over TLS.
 func WithAPIKey(key string) Option { return func(c *Config) { c.APIKey = key } }
+
+// WithClientCertificate authenticates with an mTLS client certificate, read
+// from PEM files at each handshake so rotation needs no restart.
+func WithClientCertificate(certFile, keyFile string) Option {
+	return func(c *Config) { c.ClientCertFile, c.ClientKeyFile = certFile, keyFile }
+}
 
 // WithLogger routes the SDK's logging through l.
 func WithLogger(l *slog.Logger) Option { return func(c *Config) { c.Logger = slogLogger{l} } }
@@ -89,6 +101,10 @@ func (c Config) validate() error {
 		return errors.New("temporalx: Namespace is required")
 	case c.Keyring == nil:
 		return errors.New("temporalx: Keyring is required; there is no plaintext mode")
+	case (c.ClientCertFile == "") != (c.ClientKeyFile == ""):
+		return errors.New("temporalx: client certificate and key must be given together")
+	case c.APIKey != "" && c.ClientCertFile != "":
+		return errors.New("temporalx: choose an API key or a client certificate, not both")
 	}
 	return nil
 }
@@ -116,9 +132,27 @@ func (c Config) ClientOptions() (client.Options, error) {
 		opts.Interceptors = append(opts.Interceptors, tracing)
 	}
 	opts.Interceptors = append(opts.Interceptors, c.Interceptors...)
-	if c.APIKey != "" {
+	switch {
+	case c.APIKey != "":
 		opts.Credentials = client.NewAPIKeyStaticCredentials(c.APIKey)
 		opts.ConnectionOptions = client.ConnectionOptions{TLS: &tls.Config{MinVersion: tls.VersionTLS12}}
+	case c.ClientCertFile != "":
+		// Load once now so a bad path or key fails Dial, not the first
+		// handshake; then reload per handshake for rotation.
+		if _, err := tls.LoadX509KeyPair(c.ClientCertFile, c.ClientKeyFile); err != nil {
+			return client.Options{}, fmt.Errorf("temporalx: client certificate: %w", err)
+		}
+		certFile, keyFile := c.ClientCertFile, c.ClientKeyFile
+		opts.ConnectionOptions = client.ConnectionOptions{TLS: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+				cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+				if err != nil {
+					return nil, fmt.Errorf("temporalx: reload client certificate: %w", err)
+				}
+				return &cert, nil
+			},
+		}}
 	}
 	if c.Customize != nil {
 		c.Customize(&opts)

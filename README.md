@@ -12,14 +12,24 @@ How a service connects to Temporal Cloud, in one place:
   CORS pinned to the UI, JWT verified against Temporal's issuer, an email
   allowlist, and a namespace check.
 - **Tracer provider setup** (`otelx`) for binaries that export OTLP/HTTP.
+- **Idempotent, always-bounded schedules** (`schedule`) declared from a
+  worker's startup.
+- **One set of environment variable names** (`envconfig`), for services that
+  want them. Nothing else in the module reads the environment, and nothing
+  calls `envconfig` but you.
 
-Nothing reads the environment. The caller decides where host, key and
-keyring come from.
+The core packages take their configuration through constructors and
+functional options; the caller decides where host, credential and keyring
+come from.
+
+Authentication is an API key or an mTLS client certificate
+(`WithClientCertificate`, re-read at each handshake so cert-manager can
+rotate it in place).
 
 ```go
 keys, err := temporalx.ParseKeyring(os.Getenv("TEMPORAL_ENCRYPTION_KEYS"), os.Getenv("TEMPORAL_ENCRYPTION_KEY_ID"))
 cfg, err := temporalx.NewConfig(hostPort, namespace, keys,
-    temporalx.WithAPIKey(apiKey),
+    temporalx.WithAPIKey(apiKey),            // or temporalx.WithClientCertificate(certFile, keyFile)
     temporalx.WithLogger(slog.Default()),
 )
 c, err := temporalx.Dial(ctx, cfg)
