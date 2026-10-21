@@ -6,7 +6,9 @@ package otelx
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net/url"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -53,7 +55,11 @@ func Init(ctx context.Context, serviceName string, opts ...Option) (func(context
 		return func(context.Context) error { return nil }, nil
 	}
 
-	exporterOpts := []otlptracehttp.Option{otlptracehttp.WithEndpointURL(cfg.EndpointURL)}
+	endpoint, err := tracesURL(cfg.EndpointURL)
+	if err != nil {
+		return nil, err
+	}
+	exporterOpts := []otlptracehttp.Option{otlptracehttp.WithEndpointURL(endpoint)}
 	if len(cfg.Headers) > 0 {
 		exporterOpts = append(exporterOpts, otlptracehttp.WithHeaders(cfg.Headers))
 	}
@@ -70,6 +76,21 @@ func Init(ctx context.Context, serviceName string, opts ...Option) (func(context
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{}, propagation.Baggage{},
 	))
-	cfg.Logger.Info("tracing enabled", "service", serviceName, "endpoint", cfg.EndpointURL)
+	cfg.Logger.Info("tracing enabled", "service", serviceName, "endpoint", endpoint)
 	return tp.Shutdown, nil
+}
+
+// tracesURL completes a collector base URL. The OTLP convention is that a
+// base endpoint ("http://host:4318") gets the signal path appended, while a
+// URL that already has a path is used as given. The exporter's WithEndpointURL
+// does only the second, so a bare base would post to "/" and get a 404.
+func tracesURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("otelx: endpoint %q is not an absolute URL", raw)
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/v1/traces"
+	}
+	return u.String(), nil
 }
