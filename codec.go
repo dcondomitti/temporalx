@@ -45,7 +45,13 @@ func NewCodec(keys *Keyring) *Codec { return &Codec{keys: keys} }
 // NewDataConverter wraps the SDK's default converter with the codec. This is
 // what Dial installs; it is exported for codec servers and tests.
 func NewDataConverter(keys *Keyring) converter.DataConverter {
-	return converter.NewCodecDataConverter(converter.GetDefaultDataConverter(), NewCodec(keys))
+	return NewDataConverterOver(converter.GetDefaultDataConverter(), keys)
+}
+
+// NewDataConverterOver wraps base with the codec, for services that need
+// their own payload converters underneath the encryption.
+func NewDataConverterOver(base converter.DataConverter, keys *Keyring) converter.DataConverter {
+	return converter.NewCodecDataConverter(base, NewCodec(keys))
 }
 
 // NewFailureConverter encodes failure messages and stack traces with the

@@ -9,6 +9,7 @@ import (
 
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/contrib/opentelemetry"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/log"
 )
@@ -23,6 +24,10 @@ type Config struct {
 	Namespace string
 	// Keyring seals every payload. Required.
 	Keyring *Keyring
+	// BaseDataConverter serialises values before the codec seals them.
+	// Defaults to the SDK's default converter; set it to keep a service's
+	// own composite (e.g. proto JSON that tolerates unknown fields).
+	BaseDataConverter converter.DataConverter
 
 	// APIKey authenticates to Temporal Cloud and turns on TLS. Empty, with no
 	// client certificate either, means a plaintext frontend, which only a
@@ -57,6 +62,12 @@ func WithAPIKey(key string) Option { return func(c *Config) { c.APIKey = key } }
 // from PEM files at each handshake so rotation needs no restart.
 func WithClientCertificate(certFile, keyFile string) Option {
 	return func(c *Config) { c.ClientCertFile, c.ClientKeyFile = certFile, keyFile }
+}
+
+// WithBaseDataConverter serialises with dc before sealing, instead of the
+// SDK default converter.
+func WithBaseDataConverter(dc converter.DataConverter) Option {
+	return func(c *Config) { c.BaseDataConverter = dc }
 }
 
 // WithLogger routes the SDK's logging through l.
@@ -116,7 +127,11 @@ func (c Config) ClientOptions() (client.Options, error) {
 	if err := c.validate(); err != nil {
 		return client.Options{}, err
 	}
-	dc := NewDataConverter(c.Keyring)
+	base := c.BaseDataConverter
+	if base == nil {
+		base = converter.GetDefaultDataConverter()
+	}
+	dc := NewDataConverterOver(base, c.Keyring)
 	opts := client.Options{
 		HostPort:         c.HostPort,
 		Namespace:        c.Namespace,

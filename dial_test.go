@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 )
 
 func TestConfigRequiresTheEssentials(t *testing.T) {
@@ -91,5 +92,29 @@ func TestClientCertificateOption(t *testing.T) {
 	got, err := opts.ConnectionOptions.TLS.GetClientCertificate(nil)
 	if err != nil || len(got.Certificate) == 0 {
 		t.Fatalf("loader: %v", err)
+	}
+}
+
+func TestBaseDataConverterIsKeptUnderTheCodec(t *testing.T) {
+	keys, _ := ParseKeyring("k="+randomKey(t), "")
+	base := converter.NewCompositeDataConverter(converter.NewNilPayloadConverter(), converter.NewJSONPayloadConverter())
+	cfg, err := NewConfig("h:7233", "ns", keys, WithBaseDataConverter(base), WithoutTracing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := cfg.ClientOptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := opts.DataConverter.ToPayload(map[string]int{"a": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(p.Metadata[converter.MetadataEncoding]) != MetadataEncodingEncrypted {
+		t.Fatal("custom base converter bypassed the codec")
+	}
+	var back map[string]int
+	if err := opts.DataConverter.FromPayload(p, &back); err != nil || back["a"] != 1 {
+		t.Errorf("round trip through the custom base: %v %v", back, err)
 	}
 }
