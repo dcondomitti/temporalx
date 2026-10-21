@@ -55,8 +55,7 @@ What Cloud still sees with the codec in place: workflow ids, workflow and
 activity type names, task queue names, search attributes, timestamps, and
 the trace context header (the Go SDK writes headers outside the codec).
 
-## Private module
+## Fetching
 
-Consumers need `GOPRIVATE=github.com/dcondomitti/temporalx` and git access
-to this repo. In CI, a read-only deploy key and
-`git config url."git@github.com:".insteadOf "https://github.com/"` does it.
+Public; `go get github.com/dcondomitti/temporalx@latest` through the module
+proxy like any other module. No `GOPRIVATE`, no deploy keys.
